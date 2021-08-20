@@ -1,0 +1,27 @@
+{
+  "name": "sqlite",
+  "version": "1.0.0",
+  "main": "index.js",
+  "author": "Steven Dunham <dunhamsteve@gmail.com>",
+  "license": "MIT",
+  "scripts": {
+    "build": "npm run bundle && npm run minify",
+    "bundle": "npx rollup -i sqlite.js -o dist/sqlite.js -m -f umd -n sqlite",
+    "minify": "uglifyjs dist/sqlite.js -o dist/sqlite.js"
+  },
+  "type": "module",
+  "babel": {
+    "presets": "env",
+    "plugins": [
+      [
+        "transform-react-jsx",
+        {
+          "pragma": "h"
+        }
+      ]
+    ]
+  },
+  "dependencies": {
+    "yarn": "^1.9.4"
+  }
+}
