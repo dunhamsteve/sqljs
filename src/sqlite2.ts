@@ -116,6 +116,7 @@ export class Database {
             if (type !== 'index') return
             let m = name.match(/sqlite_autoindex_(.*)_1/)
             if (sql) {
+                // FIXME these additionally have either rowid or the pks at the end (latter is without rowid)
                 t.indexes.push(parse(page,sql))
             } else if (m) {
                 t.indexes.push({ page, columns: t.pks.concat(['rowid']) })
@@ -146,6 +147,18 @@ export class Database {
         let right = data.getUint32(start+8); // only valid for types 2,5
         return { type, data, start, nCells, cellStart, right }
     }
+
+    // look up specific pk (return tuple or undefined)
+    lookup(i: number, needle: Value[]) {
+        let result = this.seek(i, needle).next()
+        if (!result.done) {
+            let tuple = result.value
+            if (-1 == needle.findIndex((v,i) => tuple[i] != v)) {
+                return tuple
+            }
+        }
+    }
+
     // return a cursor at key (or node that would follow key) where key is a prefix of the cell tuples
     // do we want a separate one for rowid?
     // this is for searching an index or materialized view (without rowid tables)
@@ -156,13 +169,13 @@ export class Database {
         assert(type == 2 || type == 10, 'scanning non index node')
         let ix = search(nCells, (i) => {
             let cell = this.cell(node,i)
-            assert(cell.payload)
-            let tuple = decode(cell.payload)
-            for (let i=0;i<needle.length;i++) {
-                if (needle[i] < tuple[i]) return true
-                if (needle[i] > tuple[i]) return false
-            }
-            return true
+            // assert(cell.payload)
+            // let tuple = decode(cell.payload)
+            // for (let i=0;i<needle.length;i++) {
+            //     if (needle[i] < tuple[i]) return true
+            //     if (needle[i] > tuple[i]) return false
+            // }
+            return tupleLE(needle, decode(cell.payload))
         })
         // seek left if necessary
         if (type == 2 && ix < nCells) {
@@ -179,18 +192,18 @@ export class Database {
             // scan the rest
             for (;ix < nCells;ix++) {
                 let cell = this.cell(node,ix)
-                if (type == 2) { yield *this.scan(cell.left) }
+                if (type == 2) { yield *this._scan(cell.left) }
                 if (cell.payload) {
                     yield decode(cell.payload)  // the key is 0 / undefined for index cells
                 }
             }
-            if (type == 2) yield *this.scan(node.right)
+            if (type == 2) yield *this._scan(node.right)
         } else {
             yield *this.seek(node.right, needle)
         }
         
     }
-    *scan(i: number): Generator<Value[]> {
+    *_scan(i: number): Generator<Value[]> {
         let node = this.getNode(i)
         let {type,nCells} = node
         assert(type == 2 || type == 10, 'scanning non index node')
@@ -198,13 +211,12 @@ export class Database {
         // scan the rest
         for (;ix < nCells;ix++) {
             let cell = this.cell(node,ix)
-            if (type == 2) { yield *this.scan(cell.left) }
+            if (type == 2) { yield *this._scan(cell.left) }
             if (cell.payload) {
-                let tuple = decode(cell.payload)
                 yield decode(cell.payload)  // the key is 0 / undefined for index cells
             }
         }
-        if (type == 2) yield *this.scan(node.right)
+        if (type == 2) yield *this._scan(node.right)
     }
     // walk a btree rooted at block i
     walk(i: number, fn: (id:number,row:any[]) => void) {
@@ -299,9 +311,16 @@ export class Database {
     }
 }
 
+function tupleLE(needle: Value[], tuple:Value[]) {
+    for (let i=0;i<needle.length;i++) {
+        if (needle[i] < tuple[i]) return true
+        if (needle[i] > tuple[i]) return false
+    }
+    return true
+}
 
-
-export function decode(data: DataView): Value[] {
+export function decode(data?: DataView): Value[] {
+    if (!data) return []
     let pos = 0;
     function varint() {
         let rval = 0;
