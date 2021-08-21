@@ -101,7 +101,7 @@ export class Database {
         
         // This is extra space in each page for stuff like encryption
         this.reserved = data.getUint8(20); assert(this.reserved == 0, "reserved not implemented");
-        this.tables = {};
+        this.tables = {}
         this.walk(1, (_,row) => {
             let [type,name,_table,page,sql] = row;
             if (type == 'table') { this.tables[name] = parse(page, sql) }
@@ -153,7 +153,7 @@ export class Database {
         let result = this.seek(i, needle).next()
         if (!result.done) {
             let tuple = result.value
-            if (-1 == needle.findIndex((v,i) => tuple[i] != v)) {
+            if (tupleEq(needle, tuple)) {
                 return tuple
             }
         }
@@ -167,42 +167,23 @@ export class Database {
         let node = this.getNode(i)
         let {type,nCells} = node
         assert(type == 2 || type == 10, 'scanning non index node')
-        let ix = search(nCells, (i) => {
-            let cell = this.cell(node,i)
-            // assert(cell.payload)
-            // let tuple = decode(cell.payload)
-            // for (let i=0;i<needle.length;i++) {
-            //     if (needle[i] < tuple[i]) return true
-            //     if (needle[i] > tuple[i]) return false
-            // }
-            return tupleLE(needle, decode(cell.payload))
-        })
-        // seek left if necessary
-        if (type == 2 && ix < nCells) {
-            let cell = this.cell(node,ix)
-            if (cell.payload) {
-                let tuple = decode(cell.payload)
-                if (-1 != needle.findIndex((v,i) => v != tuple[i])) {
-                    console.log('recurse left', needle, '<', tuple)
-                    yield *this.seek(cell.left, needle)
-                }
-            }
-        }
+        let ix = search(nCells, (i) => tupleLE(needle, decode(this.cell(node,i).payload)))
+        // seek left always - if there are multiple matches for needle, some may be buried left
+        if (type == 2 && ix < nCells) 
+            yield *this.seek(this.cell(node,ix).left, needle)
         if (ix < nCells) {
             // scan the rest
             for (;ix < nCells;ix++) {
                 let cell = this.cell(node,ix)
                 if (type == 2) { yield *this._scan(cell.left) }
-                if (cell.payload) {
-                    yield decode(cell.payload)  // the key is 0 / undefined for index cells
-                }
+                yield decode(cell.payload)  // the key is 0 / undefined for index cells
             }
             if (type == 2) yield *this._scan(node.right)
         } else {
             yield *this.seek(node.right, needle)
         }
-        
     }
+
     *_scan(i: number): Generator<Value[]> {
         let node = this.getNode(i)
         let {type,nCells} = node
@@ -310,7 +291,9 @@ export class Database {
         return {left,tlen,key,payload};
     }
 }
-
+function tupleEq(needle: Value[], tuple: Value[]) {
+    return -1 == needle.findIndex((v,i) => tuple[i] != v)
+}
 function tupleLE(needle: Value[], tuple:Value[]) {
     for (let i=0;i<needle.length;i++) {
         if (needle[i] < tuple[i]) return true
