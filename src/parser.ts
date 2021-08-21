@@ -1,3 +1,6 @@
+// TODO:
+// - [ ] select * from sqlite_master
+
 type O<A> = A|undefined
 
 type TableSpec = {
@@ -46,6 +49,18 @@ let operators = [
     tag('P', ["+","-"]),
 ]
 
+export function tokenize(sql: string) {
+    // refine this
+    let toks = []
+    for (let tok of sql.match(/\w+|".*?"|[\d.]+|'.*?'|\[.*?\]|\S/g) || []) {
+        let c = tok[0]
+        if (c=='"' || c == '[') tok = tok.slice(1,tok.length-1)
+        if (c != '"') tok = tok.toLowerCase()
+        toks.push(tok)
+    }
+    return toks
+}
+
 export function parser(sql: string) {
     let assert = <A>(value:A, msg?: string) => {  
         if (!value) 
@@ -53,8 +68,7 @@ export function parser(sql: string) {
         return value 
     }
     // refine this
-    let toks = sql.toLowerCase().match(/\w+|"[^"]*"|[\d.]+|'[^']*'|\S/g) || []
-    toks = toks.map(t => "\"'".includes(t[0])?t:t.toLowerCase())
+    let toks = tokenize(sql)
     console.log(toks)
     let p = 0
     let isident = (x: string) => x.match(/^\w+$/) && !reserved.includes(x)
@@ -108,8 +122,8 @@ export function parser(sql: string) {
         let projection = [ pExpr() ]
         while (maybe(',')) { projection.push(pExpr()) }
         let from = pFrom()
-        expect('where')
-        let where = pExpr()
+        let where
+        if (maybe('where')) where = pExpr()
         return {projection, from, where}
     }
     let isnumber = (k:string) => k.match(/^[\d.]+$/)

@@ -1,6 +1,6 @@
 
 import {readFileSync} from 'fs'
-import {Database} from './dist/sqlite2.js'
+import {Database} from './dist/sqlite.js'
 import {jlog} from './dist/util.js'
 
 let data = readFileSync('cases/database.sqlite')

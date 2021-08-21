@@ -2,6 +2,7 @@
 // Search, index, and write support are not implemented.
 // This is coded for nodejs Buffer and needs to be adjusted for ArrayBuffer/DataView
 
+import { tokenize } from './parser.js'
 import {jlog,assert, search} from './util.js'
 
 let td = new TextDecoder()
@@ -49,9 +50,10 @@ function copyView(dest: DataView, doff: number, source: DataView, soff: number, 
     }
 }
 
-// Parses column names and pk/rowid info out of create table ddl
+// extracts column names and pk/rowid info out of create table ddl
 export function parse(page: number, sql: string): Schema {
-    const toks = sql.toLowerCase().match(/\w+|"[^"]*"|\S/g) || []
+    const toks = tokenize(sql)
+    console.log(toks)
     let s = 0
     let columns:string[] = []
     let name = ''
@@ -59,20 +61,23 @@ export function parse(page: number, sql: string): Schema {
     let pks: string[] = []
     let prev =''
     let idcol = -1
+    // this is getting hairy.. 
     for (let t of toks) {
         let x = s+t
              if (x=='0(') s = 1
         else if (x=='1primary') s = 3
+        else if (x=='1constraint') s = 6
+        else if (x=='6primary') s = 3
         else if (x=='3(') s=4
         else if (x=='4,') {}
         else if (x=='4)') s=2
         else if (x=='2(') s=5 // paren in column line
         else if (x=='5)') s=2
         else if (x=='2)') s=0
-        else if (x=='2primary') { pks.push(name); if (prev=='integer') idcol=columns.length }
+        else if (x=='2primary') { pks.push(name); if (prev=='integer') idcol=columns.length-1 }
         else if (x=='1,'||x=='2,') s=1
         else if (x=='0without') rowid=false
-        else if (s==1) { columns.push(name=t); s=2 }
+        else if (s==1) { if (t != 'foreign') columns.push(name=t); s=2 }
         else if (s==4) pks.push(t)
         // else console.log(`skip "${x}"`)
         prev = t
@@ -88,7 +93,6 @@ export class Database {
     encoding: number
     reserved: number
     tables: Record<string,Schema>
-    // indexes: Record<string,Index>
     constructor(buffer: ArrayBuffer) {
         let data = new DataView(buffer);
         this.data = data;
@@ -101,7 +105,16 @@ export class Database {
         
         // This is extra space in each page for stuff like encryption
         this.reserved = data.getUint8(20); assert(this.reserved == 0, "reserved not implemented");
-        this.tables = {}
+        this.tables = {
+            sqlite_master: {
+                page: 1,
+                columns: ['type', 'name', 'tbl_name', 'rootpage', 'sql'],
+                idcol: -1,
+                indexes: [],
+                pks: [],
+                rowid: true,
+            }
+        }
         this.walk(1, (_,row) => {
             let [type,name,_table,page,sql] = row;
             if (type == 'table') { this.tables[name] = parse(page, sql) }
@@ -117,7 +130,8 @@ export class Database {
             let m = name.match(/sqlite_autoindex_(.*)_1/)
             if (sql) {
                 // FIXME these additionally have either rowid or the pks at the end (latter is without rowid)
-                t.indexes.push(parse(page,sql))
+                let {columns} = parse(page,sql)
+                t.indexes.push({page,columns})
             } else if (m) {
                 t.indexes.push({ page, columns: t.pks.concat(['rowid']) })
             } else {
