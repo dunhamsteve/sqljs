@@ -3,24 +3,12 @@
 // This is coded for nodejs Buffer and needs to be adjusted for ArrayBuffer/DataView
 
 import { tokenize } from './parser.js'
+import { Row, Schema, Value } from './types.js'
 import {jlog,assert, search} from './util.js'
 
 let td = new TextDecoder()
 
-type Row = Record<string,Value>
-type Value = string | number | null | DataView
-type Schema = {
-    page: number
-    columns: string[]
-    pks: string[]
-    idcol: number
-    rowid: boolean
-    indexes: Index[]
-}
-type Index = {
-    page: number
-    columns: string[]
-}
+
 interface Node {
     type: Number
     data: DataView
@@ -115,12 +103,12 @@ export class Database {
                 rowid: true,
             }
         }
-        this.walk(1, (_,row) => {
-            let [type,name,_table,page,sql] = row;
+        for (let [_,row] of this.walk(1)) {
+            let [type,name,_table,page,sql] = row as any;
             if (type == 'table') { this.tables[name] = parse(page, sql) }
-        });
-        this.walk(1, (_,row) => {
-            let [type,name,table,page,sql] = row;
+        }
+        for (let [_,row] of this.walk(1)) {
+            let [type,name,table,page,sql] = row as any;
             let t = this.tables[table]
             if (!t) {
                 console.error(`no table ${table} for index ${name}`)
@@ -137,16 +125,16 @@ export class Database {
             } else {
                 console.error('stray index with no sql', name)
             }
-        });
+        }
     }
     getTable(name: string) {
         let table = this.tables[name];
         let rval: Row[] = [];
-        this.walk(table.page, (key,row) => {
+        for (let [key,row] of this.walk(table.page)) {
             // For integer primary key, it's null in the row and you use the rowid
             if (table.idcol >= 0 && row[table.idcol] == null) row[table.idcol] = key;
             rval.push(zip(table.columns,row));
-        });
+        }
         return rval;
     }
     getPage(number: number) {
@@ -214,26 +202,26 @@ export class Database {
         if (type == 2) yield *this._scan(node.right)
     }
     // walk a btree rooted at block i
-    walk(i: number, fn: (id:number,row:any[]) => void) {
+    *walk(i: number): Generator<[number, Value[]]> {
         let node = this.getNode(i);
         let cells = this.cells(node)
         if (node.type == 5) {
             for (let cell of cells)
-                this.walk(cell.left, fn);
-            this.walk(node.right, fn);
+                yield *this.walk(cell.left);
+            yield* this.walk(node.right);
         } else if (node.type == 13) {
             for (let cell of cells) 
-                fn(cell.key, decode(cell.payload));
+                yield [cell.key, decode(cell.payload)];
         } else if (node.type == 10) {
             for (let cell of cells) {
-                fn(cell.key, decode(cell.payload))
+                yield [cell.key, decode(cell.payload)];
             }
         } else if (node.type == 2) {
             for (let cell of cells) {
-                this.walk(cell.left, fn)
-                fn(cell.key, decode(cell.payload))
+                yield *this.walk(cell.left)
+                yield [cell.key, decode(cell.payload)]
             }
-            this.walk(node.right, fn)
+            yield *this.walk(node.right)
         } else {
             throw Error(`unhandled node type ${node.type} in page ${i}`)
         }

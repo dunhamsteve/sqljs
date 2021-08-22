@@ -1,31 +1,10 @@
 // TODO:
 // - [ ] select * from sqlite_master
 
-type O<A> = A|undefined
+import { Expr, O, Select, TableSpec } from "./types"
 
-type TableSpec = {
-    name: string
-    left: boolean
-    on: unknown
-    as: string
-}
-
-type Lit
-    = ['NUM', number]
-    | ['STR', string]
-
-type Expr
-    = ['QN', O<string>, string]
-    | ['LIT', Lit]
-    | ['IFX', string, Expr, Expr]
-    | ['PFX', string, Expr]
-    | ['IN', Expr, Lit[] ]
-
-type Select = {
-    projection: Expr[] // these are actually expressions.. 
-    from: TableSpec[]
-    where: Expr
-}
+let debug = console.log
+debug = (...any) => {}
 
 type Pred = (k:string) => boolean
 
@@ -69,9 +48,9 @@ export function parser(sql: string) {
     }
     // refine this
     let toks = tokenize(sql)
-    console.log(toks)
+    debug(toks)
     let p = 0
-    let isident = (x: string) => x.match(/^\w+$/) && !reserved.includes(x)
+    let isident = (x: string) => x && x.match(/^\w+$/) && !reserved.includes(x)
     let next = () => toks[p++]
     let pred = (p: Pred, msg:string) => { let n = next(); assert(p(n),msg); return n }
     let ident = () => pred(isident, 'expected ident')
@@ -89,30 +68,27 @@ export function parser(sql: string) {
     // TODO - need to do parens, thinking about flattening vs associativity of left join.
     let pSpec = (left: boolean): TableSpec => {
         let name = ident()
-        let as
-        if (isident(toks[p]) || maybe('as')) {
-            as = ident()
-        }
-        let on
-        if (maybe('on')) {
-            on = pExpr()
-        }
+        let as = (isident(toks[p]) || maybe('as')) ? ident() : name
+        let on = maybe('on') ? pExpr() : undefined
         return {name, left, as, on}
     }
     let pFrom = (): TableSpec[] => {
-        let rval = [pSpec(false)]
-        for (;;) {
-            if (maybe(',')) {
-                rval.push(pSpec(false))
-            } else if (maybe('left')) {
-                maybe('outer')
-                expect('join')
-                rval.push(pSpec(true))
-            } else if (maybe('(')) {
-                rval = rval.concat(pFrom())
-                expect(')')
-            } else {
-                break
+        let rval: TableSpec[] = []
+        if (maybe('from')) {
+            rval.push(pSpec(false))
+            for (;;) {
+                if (maybe(',')) {
+                    rval.push(pSpec(false))
+                } else if (maybe('left')) {
+                    maybe('outer')
+                    expect('join')
+                    rval.push(pSpec(true))
+                } else if (maybe('(')) {
+                    rval = rval.concat(pFrom())
+                    expect(')')
+                } else {
+                    break
+                }
             }
         }
         return rval
@@ -124,7 +100,7 @@ export function parser(sql: string) {
         let from = pFrom()
         let where
         if (maybe('where')) where = pExpr()
-        return {projection, from, where}
+        return {select: projection, from, where}
     }
     let isnumber = (k:string) => k.match(/^[\d.]+$/)
     let pAExpr = (): Expr => {
@@ -144,11 +120,11 @@ export function parser(sql: string) {
             let x = operators[prec]
             if (x.tag == tag && x.includes(op)) {
                 p = q
-                console.log('ISOP',op,prec,tag)
+                debug('ISOP',op,prec,tag)
                 return [op,prec]
             }
         }
-        console.log('NOTOP',op,prec,tag)
+        debug('NOTOP',op,prec,tag)
     }
 
     // This is a pratt parser for expressions
