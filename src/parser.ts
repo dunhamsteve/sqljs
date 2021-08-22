@@ -8,7 +8,7 @@ debug = (...any) => {}
 
 type Pred = (k:string) => boolean
 
-let reserved = ["on", "select", "left"]
+let reserved = ["on", "select", "left","where"]
 
 // operator precedence table
 // maybe fix & | unless sql demands it as is
