@@ -105,7 +105,16 @@ export class Database {
         }
         for (let [_,row] of this.walk(1)) {
             let [type,name,_table,page,sql] = row as any;
-            if (type == 'table') { this.tables[name] = parse(page, sql) }
+            if (type == 'table') { 
+                let table = this.tables[name] = parse(page, sql) 
+                if (table.idcol >= 0) {
+                    table.indexes.push({
+                        type: 'rowid',
+                        page: table.page,
+                        columns: [table.columns[table.idcol]]
+                    })
+                }
+            }
         }
         for (let [_,row] of this.walk(1)) {
             let [type,name,table,page,sql] = row as any;
@@ -119,9 +128,9 @@ export class Database {
             if (sql) {
                 // FIXME these additionally have either rowid or the pks at the end (latter is without rowid)
                 let {columns} = parse(page,sql)
-                t.indexes.push({page,columns})
+                t.indexes.push({type, page, columns})
             } else if (m) {
-                t.indexes.push({ page, columns: t.pks.concat(['rowid']) })
+                t.indexes.push({type, page, columns: t.pks.concat(['rowid'])})
             } else {
                 console.error('stray index with no sql', name)
             }

@@ -3,6 +3,8 @@
 brainstorming
 
 - [ ] Add variables for prepared statements
+- [ ] Pass in two functions to scan instead of key ( <=, = )
+- [ ] 
 
 Prepare statement:
 

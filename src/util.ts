@@ -15,3 +15,36 @@ export function search(n: number, fn: (ix:number) => boolean) {
     }
     return i
 }
+
+
+// Not used at the moment
+
+class Sym extends String {}
+export function $(s: string) { return new Sym(s) }
+
+
+export function match(pat: any, item: any) {
+    let env: any = {}
+    function go(pat: any, item: any) {
+        if (pat === undefined) return true // wildcard
+        if (pat == null) { // do we need null matching or can this be wildcard?
+            if (item != pat) return false
+        } else if (pat instanceof Sym) {
+            env[pat.toString()] = item
+        } else if (pat instanceof Array) {
+            for (let i=0;i<pat.length;i++) {
+                if (!go(pat[i], item[i])) return false
+            }
+        } else if (typeof pat == 'function') {
+            if (!pat(item)) return false
+        } else if (typeof pat == "object") {
+            for (let k in pat) {
+                if (!go(pat[k], item[k])) return false
+            }
+        } else if (item != pat) {
+            return false
+        }
+        return true
+    }
+    return go(pat,item)?env:undefined
+}

@@ -17,6 +17,9 @@ for (let k in db.tables) {
     console.log()
 }
 console.log('\n\n***\n\n')
+
+// We have an index both ways here.  One is rowid, and one is standard index.
+
 for (let tuple of prepare(db, 'select name, title from artists, albums where albums.artistid = artists.artistid')) {
     console.log('-',tuple)
 }
