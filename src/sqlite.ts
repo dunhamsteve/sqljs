@@ -3,20 +3,14 @@
 // This is coded for nodejs Buffer and needs to be adjusted for ArrayBuffer/DataView
 
 import { tokenize } from './parser.js'
-import { Row, Schema, Value } from './types.js'
+import { Cell, Row, Schema, Tuple, Value, Node } from './types.js'
 import {jlog,assert, search} from './util.js'
 
 let td = new TextDecoder()
 
+let debug = console.log
+debug = x => x
 
-interface Node {
-    type: Number
-    data: DataView
-    start: number
-    nCells: number
-    cellStart: number
-    right: number
-}
 
 // turns a raw row into an object (tagged with column names)
 // pull this out into scanner when we do this for real
@@ -41,18 +35,20 @@ function copyView(dest: DataView, doff: number, source: DataView, soff: number, 
 // extracts column names and pk/rowid info out of create table ddl
 export function parse(page: number, sql: string): Schema {
     const toks = tokenize(sql)
-    console.log(toks)
+    debug(toks)
     let s = 0
     let columns:string[] = []
     let name = ''
     let rowid = true
     let pks: string[] = []
     let prev =''
-    let idcol = -1
+    let idcol
+    let table = false
     // this is getting hairy.. 
     for (let t of toks) {
         let x = s+t
              if (x=='0(') s = 1
+        else if (x=='0table') table = true
         else if (x=='1primary') s = 3
         else if (x=='1constraint') s = 6
         else if (x=='6primary') s = 3
@@ -62,7 +58,7 @@ export function parse(page: number, sql: string): Schema {
         else if (x=='2(') s=5 // paren in column line
         else if (x=='5)') s=2
         else if (x=='2)') s=0
-        else if (x=='2primary') { pks.push(name); if (prev=='integer') idcol=columns.length-1 }
+        else if (x=='2primary') { pks.push(name); if (prev=='integer') idcol=name }
         else if (x=='1,'||x=='2,') s=1
         else if (x=='0without') rowid=false
         else if (s==1) { if (t != 'foreign') columns.push(name=t); s=2 }
@@ -71,7 +67,12 @@ export function parse(page: number, sql: string): Schema {
         prev = t
     }
     // move pks to front for without rowid case (to match the table on disk)
-    if (!rowid) { columns = pks.concat(columns.filter(x => !pks.includes(x))) }
+    if (!rowid) { 
+        columns = pks.concat(columns.filter(x => !pks.includes(x))) 
+    } else if (table) {
+        // we have rowid as column 0 otherwise
+        columns.unshift('rowid')
+    }
     return {page,columns,pks,rowid,idcol,indexes:[]}
 }
 
@@ -96,41 +97,50 @@ export class Database {
         this.tables = {
             sqlite_master: {
                 page: 1,
-                columns: ['type', 'name', 'tbl_name', 'rootpage', 'sql'],
-                idcol: -1,
+                columns: ['rowid', 'type', 'name', 'tbl_name', 'rootpage', 'sql'],
                 indexes: [],
                 pks: [],
                 rowid: true,
             }
         }
-        for (let [_,row] of this.walk(1)) {
-            let [type,name,_table,page,sql] = row as any;
+        for (let row of this.seek(1,[])) {
+            let [rowid, type,name,_table,page,sql] = row as any;
+            debug({type,name})
             if (type == 'table') { 
                 let table = this.tables[name] = parse(page, sql) 
-                if (table.idcol >= 0) {
+                if (table.rowid) {
                     table.indexes.push({
+                        name,
                         type: 'rowid',
                         page: table.page,
-                        columns: [table.columns[table.idcol]]
+                        // only the first is actually in order
+                        ixcols: 1,
+                        columns: table.columns,
                     })
+                } else {
+                    // FIXME - table is an index of pks/col
                 }
             }
         }
-        for (let [_,row] of this.walk(1)) {
-            let [type,name,table,page,sql] = row as any;
+        console.log(this.tables.length, "TABLES")
+        for (let row of this.seek(1,[])) {
+            let [rowid, type,name,table,page,sql] = row as any;
+            if (type !== 'index') continue
             let t = this.tables[table]
             if (!t) {
                 console.error(`no table ${table} for index ${name}`)
-                return
+                continue
             }
-            if (type !== 'index') return
             let m = name.match(/sqlite_autoindex_(.*)_1/)
             if (sql) {
-                // FIXME these additionally have either rowid or the pks at the end (latter is without rowid)
                 let {columns} = parse(page,sql)
-                t.indexes.push({type, page, columns})
+                let ixcols = columns.length
+                // FIXME - wrong for without rowid tables
+                columns = columns.concat(t.rowid?['rowid']:t.pks)
+                t.indexes.push({name, type, page, columns, ixcols})
             } else if (m) {
-                t.indexes.push({type, page, columns: t.pks.concat(['rowid'])})
+                let ixcols = t.pks.length
+                t.indexes.push({name, type, page, columns: t.pks.concat(['rowid']), ixcols})
             } else {
                 console.error('stray index with no sql', name)
             }
@@ -139,10 +149,11 @@ export class Database {
     getTable(name: string) {
         let table = this.tables[name];
         let rval: Row[] = [];
-        for (let [key,row] of this.walk(table.page)) {
+        for (let tuple of this.seek(table.page,[])) {
             // For integer primary key, it's null in the row and you use the rowid
-            if (table.idcol >= 0 && row[table.idcol] == null) row[table.idcol] = key;
-            rval.push(zip(table.columns,row));
+            let x = zip(table.columns,tuple)
+            if (table.idcol) x[table.idcol] = x.rowid
+            rval.push(x);
         }
         return rval;
     }
@@ -177,20 +188,23 @@ export class Database {
     *seek(i: number, needle: Value[]): Generator<Value[]>  {
         let node = this.getNode(i)
         let {type,nCells} = node
-        assert(type == 2 || type == 10, 'scanning non index node')
-        let ix = search(nCells, (i) => tupleLE(needle, decode(this.cell(node,i).payload)))
+        // assert(type == 2 || type == 10, 'scanning non index node')
+        
+        let ix = search(nCells, (i) => tupleLE(needle, this.cell(node,i).tuple))
         // seek left always - if there are multiple matches for needle, some may be buried left
-        if (type == 2 && ix < nCells) 
+        if (type < 10 && ix < nCells) 
             yield *this.seek(this.cell(node,ix).left, needle)
         if (ix < nCells) {
             // scan the rest
             for (;ix < nCells;ix++) {
                 let cell = this.cell(node,ix)
-                if (type == 2) { yield *this._scan(cell.left) }
-                yield decode(cell.payload)  // the key is 0 / undefined for index cells
+                if (type < 10) { yield *this._scan(cell.left) }
+                if (type != 5) {
+                    yield cell.tuple
+                }
             }
-            if (type == 2) yield *this._scan(node.right)
-        } else {
+            if (type < 10) yield *this._scan(node.right)
+        } else if (type == 2 || type == 5) {
             yield *this.seek(node.right, needle)
         }
     }
@@ -198,42 +212,14 @@ export class Database {
     *_scan(i: number): Generator<Value[]> {
         let node = this.getNode(i)
         let {type,nCells} = node
-        assert(type == 2 || type == 10, 'scanning non index node')
         let ix = 0
         // scan the rest
         for (;ix < nCells;ix++) {
             let cell = this.cell(node,ix)
             if (type == 2) { yield *this._scan(cell.left) }
-            if (cell.payload) {
-                yield decode(cell.payload)  // the key is 0 / undefined for index cells
-            }
+            if (type != 5) yield cell.tuple
         }
-        if (type == 2) yield *this._scan(node.right)
-    }
-    // walk a btree rooted at block i
-    *walk(i: number): Generator<[number, Value[]]> {
-        let node = this.getNode(i);
-        let cells = this.cells(node)
-        if (node.type == 5) {
-            for (let cell of cells)
-                yield *this.walk(cell.left);
-            yield* this.walk(node.right);
-        } else if (node.type == 13) {
-            for (let cell of cells) 
-                yield [cell.key, decode(cell.payload)];
-        } else if (node.type == 10) {
-            for (let cell of cells) {
-                yield [cell.key, decode(cell.payload)];
-            }
-        } else if (node.type == 2) {
-            for (let cell of cells) {
-                yield *this.walk(cell.left)
-                yield [cell.key, decode(cell.payload)]
-            }
-            yield *this.walk(node.right)
-        } else {
-            throw Error(`unhandled node type ${node.type} in page ${i}`)
-        }
+        if (type == 2 || type == 5) yield *this._scan(node.right)
     }
     // Get all the cells in a Node
     cells(node: Node) {
@@ -244,7 +230,7 @@ export class Database {
         return cells;   
     }
 
-    cell(page: Node, i: number) {
+    cell(page: Node, i: number): Cell {
         let ptr = page.start + ((page.type<8)?12:8); 
         let data = page.data;
         let pos = data.getUint16(ptr+2*i);
@@ -266,8 +252,9 @@ export class Database {
         }
         let left = (type == 5 || type == 2) ? u32() : 0
         let tlen = type == 5 ? 0 : varint();
-        let key =  (type == 13 || type == 5) ? varint() : 0;
+        let rowid =  (type == 13 || type == 5) ? varint() : undefined;
         let payload
+        let tuple: Tuple = []
         if (type !== 5) {
             let u = data.byteLength; // REVIEW - this right if we're on the first page?
             let x = page.type === 13 ? u-35 : (((u-12)*64/255)|0)-23;
@@ -297,24 +284,27 @@ export class Database {
                     }
                 }
             }
-            assert(payload.byteLength == tlen, "Length mismatch");    
+            assert(payload.byteLength == tlen, "Length mismatch");   
+            tuple = decode_(payload) 
+            if (rowid != undefined) tuple.unshift(rowid)
+        } else if (rowid) {
+            tuple = [rowid]
         }
-        return {left,tlen,key,payload};
+        return {left,rowid,tuple};
     }
 }
-function tupleEq(needle: Value[], tuple: Value[]) {
+export function tupleEq(needle: Value[], tuple: Value[]) {
     return -1 == needle.findIndex((v,i) => tuple[i] != v)
 }
-function tupleLE(needle: Value[], tuple:Value[]) {
+export function tupleLE(needle: Value[], tuple:Value[]) {
     for (let i=0;i<needle.length;i++) {
-        if (needle[i] < tuple[i]) return true
-        if (needle[i] > tuple[i]) return false
+        if (needle[i]! < tuple[i]!) return true
+        if (needle[i]! > tuple[i]!) return false
     }
     return true
 }
 
-export function decode(data?: DataView): Value[] {
-    if (!data) return []
+export function decode_(data: DataView): Value[] {
     let pos = 0;
     function varint() {
         let rval = 0;

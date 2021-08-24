@@ -41,7 +41,7 @@ export function tokenize(sql: string) {
 }
 
 export function parser(sql: string) {
-    let assert = <A>(value:A, msg?: string) => {  
+    let assert = <A>(value:A, msg?: string): A => {  
         if (!value) 
             throw new Error(`${msg??"parse error"} at ${toks[p]}`); 
         return value 
@@ -50,7 +50,7 @@ export function parser(sql: string) {
     let toks = tokenize(sql)
     debug(toks)
     let p = 0
-    let isident = (x: string) => x && x.match(/^\w+$/) && !reserved.includes(x)
+    let isident = (x: string) => !!(x && x.match(/^\w+$/) && !reserved.includes(x))
     let next = () => toks[p++]
     let pred = (p: Pred, msg:string) => { let n = next(); assert(p(n),msg); return n }
     let ident = () => pred(isident, 'expected ident')
@@ -109,6 +109,7 @@ export function parser(sql: string) {
         if (isident(t))  { return pQName() }
         if (toks[p][0]=="'") { next(); return ['LIT',['STR', t.slice(1,t.length-1)]]}
         assert(false,'expected literal or identifier')
+        if (true) throw new Error()
     }
 
     let maybeOper = (prec: number, tag: string): O<[string,number]> => {
@@ -133,7 +134,7 @@ export function parser(sql: string) {
         let left: Expr
         let pfx = maybeOper(0,'P')
         if (pfx) {
-            left = ['PFX', , pExpr(p)]
+            left = ['PFX', pfx[0], pExpr(pfx[1])]
         } else {
             left = pAExpr()
         }

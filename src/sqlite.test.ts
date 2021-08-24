@@ -11,7 +11,7 @@ if (false) {
     let pager = new Database(data.buffer);
     console.log(pager.getTable('ZFSNOTE'));
     
-} else {
+} else { 
     let data
     // data = readFileSync('cases/test.db');
     data = readFileSync('cases/chinook.db');

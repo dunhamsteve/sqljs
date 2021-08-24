@@ -1,15 +1,25 @@
+export interface Node {
+    type: Number
+    data: DataView
+    start: number
+    nCells: number
+    cellStart: number
+    right: number
+}
 export type Schema = {
     page: number
     columns: string[]
     pks: string[]
-    idcol: number
+    idcol?: string
     rowid: boolean
     indexes: Index[]
 }
 export type Index = {
+    name: string
     type: 'rowid' | 'index'
     page: number
     columns: string[]
+    ixcols: number
 }
 export type Lit
     = ['NUM', number]
@@ -27,18 +37,22 @@ export type Expr
 export type Select = {
     select: Expr[] // these are actually expressions.. 
     from: TableSpec[]
-    where: Expr
+    where?: Expr
 }
 export type O<A> = A|undefined
 
 export type TableSpec = {
     name: string
     left: boolean
-    on: Expr
+    on?: Expr
     as: string
 }
 
-
+export type Cell = {
+    left: number
+    rowid?: number
+    tuple: Tuple
+}
 
 export type Row = Record<string,Value>
 export type Value = string | number | null | DataView
