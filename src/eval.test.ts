@@ -20,6 +20,8 @@ console.log('\n\n***\n\n')
 
 // We have an index both ways here.  One is rowid, and one is standard index.
 let sql ='select name, title from artists, albums where albums.artistid = artists.artistid'
+// NEXT/TODO this is broken, figure out why
+sql ='select artists.name, title, tracks.name from artists, albums, tracks where albums.artistid = artists.artistid and tracks.albumid = albums.albumid'
 // sql = 'select artists.artistid, name from artists,albums where albums.artistid = artists.artistid'
 for (let tuple of prepare(db, sql)) {
     console.log('-',tuple)

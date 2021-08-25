@@ -1,6 +1,6 @@
 import { parser } from "./parser.js";
 import { Database, tupleEq } from "./sqlite.js";
-import { Expr, Schema, O, QName, Value, Row, Tuple, Index, Infix } from "./types.js";
+import { Expr, Schema, O, QName, Value, Tuple, Index, Infix } from "./types.js";
 import { assert, jlog } from "./util.js";
 
 type TableInfo = {
@@ -47,6 +47,12 @@ export function *prepare(db: Database, sql: string) {
         let schema = db.tables[name]
         assert(schema, `can't find table ${name}`)
         assert(as, `empty as for ${name}`)
+        if (schema.idcol) {
+            for (let index of schema.indexes) {
+                index.columns = index.columns.map(x => x == schema.idcol ? 'rowid' : x)
+            }
+        }
+
         const info: TableInfo = { as, schema, left, need: new Set(), state: 0 };
         name2table[as] = info
         tables.push(info)
@@ -69,6 +75,9 @@ export function *prepare(db: Database, sql: string) {
                 expr[1] = names[0]
             }
             let table = name2table[expr[1]]
+            // this breaks stuff. I think because indexes use the other name. 
+            // maybe just go the other way? rename the first table column
+            if (expr[2] == table.schema.idcol) expr[2] = 'rowid'
             assert(table, `unknown table ${expr[1]}`)
             table.need.add(expr[2])
         })
@@ -89,7 +98,7 @@ export function *prepare(db: Database, sql: string) {
     let constraints: Constraint[] = []
     function flat(expr?: Expr) {
         if (!expr) return
-        if (expr[0] == 'IFX' && expr [1] == 'AND') {
+        if (expr[0] == 'IFX' && expr [1] == 'and') {
             flat(expr[2])
             flat(expr[3])
         } else {
@@ -109,6 +118,7 @@ export function *prepare(db: Database, sql: string) {
         let {indexes} = info.schema
         info.state = 1 // scanning
         for (let constraint of constraints) {
+            if (constraint.done) continue
             let {expr} = constraint
             if (expr[0] == 'IFX') {
                 if (expr[3][0] == 'QN' && expr[3][1] == info.as) {
@@ -126,6 +136,7 @@ export function *prepare(db: Database, sql: string) {
                     if (index && ['=','<','<='].includes(op)) {
                         // we grab the first matching index and run with it
                         console.log('MATCH', info.as, field, 'for', expr)
+                        console.log('INDEX is', index)
                         constraint.done = true // pre-mark this
                         eachName(right, qname => qname[1] && visit(name2table[qname[1]]))
                         info.constraint = expr
@@ -167,6 +178,7 @@ export function *prepare(db: Database, sql: string) {
 
     // project contains 0 for rowid or 1-based index for 
     function *scan(input: Generator<Tuple>, table: TableInfo, project: number[]) {
+        console.log('SCAN',table.as, project, (project.map(i => table.schema.columns[i])))
         for (let inTuple of input) {
             for (let newTuple of db.seek(table.schema.page,[])) {
                 yield inTuple.concat(project.map(i => newTuple[i]))
@@ -176,22 +188,30 @@ export function *prepare(db: Database, sql: string) {
 
   
     function *filter(output: Generator<Tuple>, constraint: Expr) {
+        console.log('FILTER',constraint)
         for (let tuple of output) {
             if (eval_(tuple, constraint)) yield tuple
         }
     }
 
     function *rowidEq(input: Generator<Tuple>, index: Index, constraint: Expr, project: number[]) {
-        debugger
+        console.log('ROWIDEQ', index, constraint, project)
+        let ci = 0, co = 0
         for (let inTuple of input) {
+            ci++
             let rowid = eval_(inTuple, constraint)
             let newTuple = db.lookup(index.page, [rowid])
+            assert(newTuple,'MISS')
             if (newTuple) {
+                co++
                 yield inTuple.concat(project.map(i=> newTuple![i]))
             }
         }
+        console.log('> ROWIDEQ', ci, co, index, constraint, project)
+
     }
     function *indexEq(input: Generator<Tuple>, index: Index, constraint: Expr, project: number[]) {
+        console.log('INDEXEQ', index, constraint, project)
         for (let inTuple of input) {
             let value = eval_(inTuple, constraint)
             for (let tuple of db.seek(index.page, [value])) {
