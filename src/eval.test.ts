@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { prepare } from "./eval.js";
+import { execute } from "./eval.js";
 import { Database } from "./sqlite.js";
 import { jlog } from "./util.js";
 
@@ -22,7 +22,9 @@ console.log('\n\n***\n\n')
 let sql ='select name, title from artists, albums where albums.artistid = artists.artistid'
 // NEXT/TODO this is broken, figure out why
 sql ='select artists.name, title, tracks.name from artists, albums, tracks where albums.artistid = artists.artistid and tracks.albumid = albums.albumid'
+sql = `select artists.name, title, tracks.name, genres.name
+       from artists, albums, tracks, genres where albums.artistid = artists.artistid and tracks.albumid = albums.albumid and tracks.genreid = genres.genreid`
 // sql = 'select artists.artistid, name from artists,albums where albums.artistid = artists.artistid'
-for (let tuple of prepare(db, sql)) {
-    console.log('-',tuple)
+for (let tuple of execute(db, sql)) {
+    console.log(tuple)
 }

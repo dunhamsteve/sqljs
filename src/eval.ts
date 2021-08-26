@@ -33,11 +33,17 @@ type Constraint = {
     // additional bookkeeping, indexes, tables, etc
 }
 
+// TODO - for the plan dump a sequence of this with the expr's rewritten to point at tuple indexes instead of names
+// I'd do it in visit, but I wanted to reserve the right to run multiple scenarios...
+type Step = { type: 'filter', expr: Expr }
+          | { type: 'rowid', expr: Expr, index: Index, project: number[] }
+          | { type: 'scan', table: Schema, project: number[] }
+          | { type: 'index', index: Index, project: number[] }
+
 // v1, this just does everything
 // v2, we'll return a plan and execute it (with args) below
-export function *prepare(db: Database, sql: string) {
+export function *execute(db: Database, sql: string) {
     let query = parser(sql)
-    // jlog(query)
 
     let col2table: Record<string,string[]> = {}
     let name2table: Record<string,TableInfo> = {}
@@ -77,6 +83,7 @@ export function *prepare(db: Database, sql: string) {
             let table = name2table[expr[1]]
             // this breaks stuff. I think because indexes use the other name. 
             // maybe just go the other way? rename the first table column
+            assert(table, `unknown table ${expr[1]}`)
             if (expr[2] == table.schema.idcol) expr[2] = 'rowid'
             assert(table, `unknown table ${expr[1]}`)
             table.need.add(expr[2])
@@ -186,29 +193,22 @@ export function *prepare(db: Database, sql: string) {
         }
     }
 
-  
     function *filter(output: Generator<Tuple>, constraint: Expr) {
         console.log('FILTER',constraint)
         for (let tuple of output) {
             if (eval_(tuple, constraint)) yield tuple
         }
     }
-
     function *rowidEq(input: Generator<Tuple>, index: Index, constraint: Expr, project: number[]) {
         console.log('ROWIDEQ', index, constraint, project)
-        let ci = 0, co = 0
         for (let inTuple of input) {
-            ci++
             let rowid = eval_(inTuple, constraint)
             let newTuple = db.lookup(index.page, [rowid])
             assert(newTuple,'MISS')
             if (newTuple) {
-                co++
                 yield inTuple.concat(project.map(i=> newTuple![i]))
             }
         }
-        console.log('> ROWIDEQ', ci, co, index, constraint, project)
-
     }
     function *indexEq(input: Generator<Tuple>, index: Index, constraint: Expr, project: number[]) {
         console.log('INDEXEQ', index, constraint, project)
@@ -283,20 +283,15 @@ export function *prepare(db: Database, sql: string) {
                             project2.push(i)
                         }
                     })
+                    // would be nice to discharge any filters before doing the join.
                     if (project2.length) {
                         console.log('YES')
                         output = rowidEq(output,table.schema.indexes[0], ['QN',table.as, 'rowid'], project2)
                     }
-                }else {
+                } else {
                     assert(false, `unhandled index op ${op}`)
-                
                 }
             }
-            // ******** run the constraint.
-
-
-            // need to handle the rowid join here, or add it to the plan..
-            // would be nice to discharge any filters before doing the join.
         } else {
             // move scan up here
             let project: number[] = []

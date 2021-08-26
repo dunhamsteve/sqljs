@@ -11,15 +11,6 @@ let td = new TextDecoder()
 let debug = console.log
 debug = x => x
 
-
-// turns a raw row into an object (tagged with column names)
-// pull this out into scanner when we do this for real
-function zip(a: string[],b: Value[]) {
-    let rval: Row = {};
-    a.forEach((v,i)=>rval[v]=b[i]);
-    return rval;
-}
-
 // slice for a DataView
 function sliceView(view: DataView, start: number, end: number) {
     return new DataView(view.buffer, view.byteOffset+start, end-start);
@@ -146,17 +137,7 @@ export class Database {
             }
         }
     }
-    getTable(name: string) {
-        let table = this.tables[name];
-        let rval: Row[] = [];
-        for (let tuple of this.seek(table.page,[])) {
-            // For integer primary key, it's null in the row and you use the rowid
-            let x = zip(table.columns,tuple)
-            if (table.idcol) x[table.idcol] = x.rowid
-            rval.push(x);
-        }
-        return rval;
-    }
+    
     getPage(number: number) {
         return new DataView(this.data.buffer, (number-1)*this.pageSize, this.pageSize);
     }

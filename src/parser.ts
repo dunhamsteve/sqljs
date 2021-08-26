@@ -129,7 +129,7 @@ export function parser(sql: string) {
     }
 
     // This is a pratt parser for expressions
-    // TODO - postfix
+    // TODO - add postfix operators
     let pExpr = (prec=0): Expr => {
         let left: Expr
         let pfx = maybeOper(0,'P')
@@ -145,7 +145,6 @@ export function parser(sql: string) {
         }
         return left
     }
-
     return pSelect()
 }
 
