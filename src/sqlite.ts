@@ -196,21 +196,16 @@ export class Database {
                     node = this.getNode(cell(ix).left)
                     ix = 0
                 }
-            } else if (node.type&8) { // leaf
-                // hit right on leaf, pop through rights
-                for (;;) {
-                    let t = stack.pop()
-                    if (!t) return
-                    node = t[0]
-                    ix = t[1]
-                    if (ix < node.nCells) {
-                        if (node.type != 5) yield cell(ix).tuple
-                        ix++
-                        break // can we setup state so the outer for (;;) works?
-                    } else {
-                        // popped from right, continue
-                    }
-                }
+            } else if (node.type&8 || ix > node.nCells) {
+                // leaf or past end = pop
+                // emit the key if appropriate and increment ix
+                let t = stack.pop()
+                if (!t) return
+                node = t[0]
+                ix = t[1]
+                if (ix < node.nCells && node.type != 5)
+                    yield cell(ix).tuple
+                ix++
             } else {
                 stack.push([node,ix])
                 node = this.getNode(node.right)
