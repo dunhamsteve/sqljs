@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { execute } from "./eval.js";
 import { Database } from "./sqlite.js";
 import { jlog } from "./util.js";
@@ -18,13 +18,29 @@ for (let k in db.tables) {
 }
 console.log('\n\n***\n\n')
 
-// We have an index both ways here.  One is rowid, and one is standard index.
-let sql ='select name, title from artists, albums where albums.artistid = artists.artistid'
-// NEXT/TODO this is broken, figure out why
-sql ='select artists.name, title, tracks.name from artists, albums, tracks where albums.artistid = artists.artistid and tracks.albumid = albums.albumid'
-sql = `select artists.name, title, tracks.name, genres.name
-       from artists, albums, tracks, genres where albums.artistid = artists.artistid and tracks.albumid = albums.albumid and tracks.genreid = genres.genreid`
-// sql = 'select artists.artistid, name from artists,albums where albums.artistid = artists.artistid'
-for (let tuple of execute(db, sql)) {
-    console.log(tuple)
+type Case = [string, number, string]
+let cases: Case[] = [
+    ['scan',   275, 'select artistid, name from artists'],
+    ['scan2',  347, 'select albumid, title from albums'],
+    ['join2',  347, 'select name, title from artists, albums where albums.artistid = artists.artistid'],
+    ['join3', 3503, 'select artists.name, title, tracks.name from artists, albums, tracks where albums.artistid = artists.artistid and tracks.albumid = albums.albumid'],
+    ['join4', 3503, `select artists.name, title, tracks.name, genres.name
+                     from artists, albums, tracks, genres 
+                     where albums.artistid = artists.artistid and tracks.albumid = albums.albumid and tracks.genreid = genres.genreid`],
+    ['great',  175, 'select rowid, name from artists where rowid > 100'],
+    ['less',    99, 'select rowid, name from artists where rowid < 100'],
+]
+
+
+
+for (let [key,cnt,query] of cases) {
+    console.log(`\n*** ${key}`)
+    let rows = ''
+    let count = 0
+    for (let tuple of execute(db, query)) {
+        rows += tuple.join('\t')+'\n'
+        count++
+    }
+    console.log(`--- ${key} ${count} rows, expect ${cnt}`)
+    writeFileSync(`tmp/${key}.tsv`, rows)
 }

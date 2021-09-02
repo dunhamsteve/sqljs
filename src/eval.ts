@@ -70,7 +70,8 @@ export function *execute(db: Database, sql: string) {
         }
     }
     
-    // Markup the table names for unqualified references
+    // Fill in table names on column references
+    // This also collects a list of needed fields for each table.
     function qualify(expr?: Expr) {
         eachName(expr, (expr)=> {
             if (!expr[1]) {
@@ -81,11 +82,8 @@ export function *execute(db: Database, sql: string) {
                 expr[1] = names[0]
             }
             let table = name2table[expr[1]]
-            // this breaks stuff. I think because indexes use the other name. 
-            // maybe just go the other way? rename the first table column
             assert(table, `unknown table ${expr[1]}`)
             if (expr[2] == table.schema.idcol) expr[2] = 'rowid'
-            assert(table, `unknown table ${expr[1]}`)
             table.need.add(expr[2])
         })
     }
@@ -101,7 +99,8 @@ export function *execute(db: Database, sql: string) {
     // So I think SQLite is trying to turn ors into in clauses or between clauses
     // and then just top level ands.
 
-    // at the very least we need to pick the constraints for each table
+    
+    // Flatten out constraints into a list of things that are anded together
     let constraints: Constraint[] = []
     function flat(expr?: Expr) {
         if (!expr) return
@@ -116,7 +115,8 @@ export function *execute(db: Database, sql: string) {
         }
     }
     flat(query.where)
-    // try to topo-sort the tables
+
+    // Query plan is to topological sort tables by dependencies.
     let plan: TableInfo[] = []
     function visit(info: TableInfo) {
         // Here a dependent is pointing back at us, the constraint can't be resolved until we get to our table
@@ -140,7 +140,7 @@ export function *execute(db: Database, sql: string) {
                     let index = indexes.find(ix => ix.columns[0] == field)
                     // These are the operations we know at the moment
                     // We'll handle backwards and like at some point
-                    if (index && ['=','<','<='].includes(op)) {
+                    if (index && ['=','>','>='].includes(op)) {
                         // we grab the first matching index and run with it
                         console.log('MATCH', info.as, field, 'for', expr)
                         console.log('INDEX is', index)
@@ -155,6 +155,8 @@ export function *execute(db: Database, sql: string) {
         }
         plan.push(info)
         info.state = 2 // done
+        // At this point, in execution below, additional constraints are filtered
+        // and we do a rowid join if necessary
     }
     tables.forEach(visit)
     plan.reverse()
@@ -199,27 +201,43 @@ export function *execute(db: Database, sql: string) {
             if (eval_(tuple, constraint)) yield tuple
         }
     }
-    function *rowidEq(input: Generator<Tuple>, index: Index, constraint: Expr, project: number[]) {
+    function *rowidEq(input: Generator<Tuple>, index: Index, op: string, constraint: Expr, project: number[]) {    
         console.log('ROWIDEQ', index, constraint, project)
-        for (let inTuple of input) {
-            let rowid = eval_(inTuple, constraint)
-            let newTuple = db.lookup(index.page, [rowid])
-            assert(newTuple,'MISS')
-            if (newTuple) {
-                yield inTuple.concat(project.map(i=> newTuple![i]))
-            }
-        }
-    }
-    function *indexEq(input: Generator<Tuple>, index: Index, constraint: Expr, project: number[]) {
-        console.log('INDEXEQ', index, constraint, project)
+        if (op != '=' && op != '>' && op != '>=') assert(false, `unhandled rowid op ${op}`)
         for (let inTuple of input) {
             let value = eval_(inTuple, constraint)
             for (let tuple of db.seek(index.page, [value])) {
-                if (!tupleEq([value],tuple)) break
+                const eq = tupleEq([value], tuple);
+                if (op == '=' && !eq) break
+                if (op == '>' && eq) continue
                 yield inTuple.concat(project.map(i=> tuple![i]))
             }
         }
     }
+    function *indexEq(input: Generator<Tuple>, index: Index, op: string, constraint: Expr, project: number[]) {
+        console.log('INDEXEQ', index, constraint, project)
+        if (op != '=' && op != '>' && op != '>=') assert(false, `unhandled op ${op}`)
+        for (let inTuple of input) {
+            let value = eval_(inTuple, constraint)
+            for (let tuple of db.seek(index.page, [value])) {
+                const eq = tupleEq([value], tuple);
+                if (op == '=' && !eq) break
+                if (op == '>' && eq) continue
+                yield inTuple.concat(project.map(i=> tuple![i]))
+            }
+        }
+    }
+
+    function dofilters() {
+        for (let constraint of constraints) {
+            if (!constraint.done && isFree(constraint.expr)) {
+                console.log('discharge', constraint)
+                output = filter(output, constraint.expr)
+                constraint.done = true
+            }
+        }
+    }
+
     // we need to identify rowid constraints and reorder the tables
     // TODO - On clauses, etc
     // we should start with a dummy table (one empty tuple) and attach bare constraints
@@ -231,13 +249,7 @@ export function *execute(db: Database, sql: string) {
         // discharge available constraints
         // TODO - precalc this (above) and move into plan
         // Plan will be sequence of index, filter, whatever
-        for (let constraint of constraints) {
-            if (!constraint.done && isFree(constraint.expr)) {
-                console.log('discharge', constraint)
-                output = filter(output, constraint.expr)
-                constraint.done = true
-            }
-        }
+        dofilters()
         const table = plan.pop()
         if (!table) break
         // find appropriate index or scan table
@@ -246,7 +258,6 @@ export function *execute(db: Database, sql: string) {
             let op = table.constraint[1]
             let ty = table.index.type
             if (ty == 'rowid') {
-                if (op == '=') {
                     let project: number[] = []
                     table.index.columns.forEach((v,i) => {
                         if (table.need.has(v)) {
@@ -255,42 +266,37 @@ export function *execute(db: Database, sql: string) {
                             project.push(i)
                         }
                     })
-                    output = rowidEq(output, table.index, table.constraint[3], project)
-                } else {
-                    assert(false, `unhandled rowid op ${op}`)
-                
-                }
-                
+                    output = rowidEq(output, table.index, op, table.constraint[3], project)
             } else {
-                if (op == '=') {
-                    console.log('INDEX', table.index.name)
-                    let project: number[] = []
-                    table.index.columns.forEach((v,i) => {
-                        if (table.need.has(v)|| v == 'rowid') {
-                            console.log('project',v)
-                            fields.push(table.as+'.'+v)
-                            project.push(i)
-                        }
-                    })
-                    output = indexEq(output, table.index, table.constraint[3], project)
-                    console.log('rowid to table?', table.as)
-                    let project2: number[] = []
-                    table.schema.columns.forEach((v,i) => {
-                        let key = table.as+'.'+v
-                        if (table.need.has(v) && ! fields.includes(key)) {
-                            console.log('project', v, key)
-                            fields.push(key)
-                            project2.push(i)
-                        }
-                    })
-                    // would be nice to discharge any filters before doing the join.
-                    if (project2.length) {
-                        console.log('YES')
-                        output = rowidEq(output,table.schema.indexes[0], ['QN',table.as, 'rowid'], project2)
+                console.log('INDEX', table.index.name)
+                let project: number[] = []
+                table.index.columns.forEach((v,i) => {
+                    if (table.need.has(v)|| v == 'rowid') {
+                        console.log('project',v)
+                        fields.push(table.as+'.'+v)
+                        project.push(i)
                     }
-                } else {
-                    assert(false, `unhandled index op ${op}`)
+                })
+                output = indexEq(output, table.index, op, table.constraint[3], project)
+                console.log('rowid to table?', table.as)
+                // for any columns picked up by the index
+                dofilters()
+
+                let project2: number[] = []
+                table.schema.columns.forEach((v,i) => {
+                    let key = table.as+'.'+v
+                    if (table.need.has(v) && ! fields.includes(key)) {
+                        console.log('project', v, key)
+                        fields.push(key)
+                        project2.push(i)
+                    }
+                })
+                
+                if (project2.length) {
+                    console.log('YES')
+                    output = rowidEq(output,table.schema.indexes[0], '=', ['QN',table.as, 'rowid'], project2)
                 }
+            
             }
         } else {
             // move scan up here
