@@ -169,12 +169,11 @@ export class Database {
     *seek(i: number, needle: Value[]): Generator<Value[]>  {
         let node = this.getNode(i)
         let {type,nCells} = node
-        // assert(type == 2 || type == 10, 'scanning non index node')
         
         let ix = search(nCells, (i) => tupleLE(needle, this.cell(node,i).tuple))
         // seek left always - if there are multiple matches for needle, some may be buried left
         if (type < 10 && ix < nCells) 
-            yield *this.seek(this.cell(node,ix).left, needle)
+            yield *this.seek(this.cell(node,ix++).left, needle)
         if (ix < nCells) {
             // scan the rest
             for (;ix < nCells;ix++) {
