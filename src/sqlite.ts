@@ -122,6 +122,7 @@ export class Database {
                 console.error(`no table ${table} for index ${name}`)
                 continue
             }
+            // see also unique keys.. Probably have to do this in the create table parser
             let m = name.match(/sqlite_autoindex_(.*)_1/)
             if (sql) {
                 let {columns} = parse(page,sql)
@@ -141,6 +142,7 @@ export class Database {
     getPage(number: number) {
         return new DataView(this.data.buffer, (number-1)*this.pageSize, this.pageSize);
     }
+    // Get btree node for page i
     getNode(i: number) {
         let data = this.getPage(i)
         let start = i == 1 ? 100 : 0
@@ -161,46 +163,62 @@ export class Database {
             }
         }
     }
-
+    
     // return a cursor at key (or node that would follow key) where key is a prefix of the cell tuples
     // do we want a separate one for rowid?
     // this is for searching an index or materialized view (without rowid tables)
     // generator will be our "cursor"
     *seek(i: number, needle: Value[]): Generator<Value[]>  {
+        // Find start
+        let stack: [Node,number][]  = []
         let node = this.getNode(i)
-        let {type,nCells} = node
+        let cell = (ix:number) => this.cell(node,ix)
+        let ix: number
+        for (;;) {
+            ix = search(node.nCells, (i) => tupleLE(needle, this.cell(node,i).tuple))
+            if (node.type&8) break // leaf
+            stack.push([node,ix])
+            if (ix < node.nCells)
+                node = this.getNode(cell(ix).left)
+            else
+                node = this.getNode(node.right)
+        }
         
-        let ix = search(nCells, (i) => tupleLE(needle, this.cell(node,i).tuple))
-        // seek left always - if there are multiple matches for needle, some may be buried left
-        if (type < 10 && ix < nCells) 
-            yield *this.seek(this.cell(node,ix++).left, needle)
-        if (ix < nCells) {
-            // scan the rest
-            for (;ix < nCells;ix++) {
-                let cell = this.cell(node,ix)
-                if (type < 10) { yield *this._scan(cell.left) }
-                if (type != 5) {
-                    yield cell.tuple
+        // the loop assumes we need to recurse down if we're at a left node, which
+        // works initially because we're at a leaf
+        for (;;) {
+            if (ix < node.nCells) {
+                if (node.type&8) { // leaf
+                    yield cell(ix).tuple
+                    ix++
+                } else {
+                    stack.push([node,ix])
+                    node = this.getNode(cell(ix).left)
+                    ix = 0
                 }
+            } else if (node.type&8) { // leaf
+                // hit right on leaf, pop through rights
+                for (;;) {
+                    let t = stack.pop()
+                    if (!t) return
+                    node = t[0]
+                    ix = t[1]
+                    if (ix < node.nCells) {
+                        if (node.type != 5) yield cell(ix).tuple
+                        ix++
+                        break // can we setup state so the outer for (;;) works?
+                    } else {
+                        // popped from right, continue
+                    }
+                }
+            } else {
+                stack.push([node,ix])
+                node = this.getNode(node.right)
+                ix = 0
             }
-            if (type < 10) yield *this._scan(node.right)
-        } else if (type == 2 || type == 5) {
-            yield *this.seek(node.right, needle)
         }
     }
 
-    *_scan(i: number): Generator<Value[]> {
-        let node = this.getNode(i)
-        let {type,nCells} = node
-        let ix = 0
-        // scan the rest
-        for (;ix < nCells;ix++) {
-            let cell = this.cell(node,ix)
-            if (type == 2) { yield *this._scan(cell.left) }
-            if (type != 5) yield cell.tuple
-        }
-        if (type == 2 || type == 5) yield *this._scan(node.right)
-    }
     // Get all the cells in a Node
     cells(node: Node) {
         let cells: any[] = [];

@@ -1,5 +1,5 @@
 export interface Node {
-    type: Number
+    type: number
     data: DataView
     start: number
     nCells: number
