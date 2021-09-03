@@ -35,7 +35,7 @@ export function parse(page: number, sql: string): Schema {
     let prev =''
     let idcol
     let table = false
-    // this is getting hairy.. 
+    // this is getting hairy..
     for (let t of toks) {
         let x = s+t
              if (x=='0(') s = 1
@@ -58,8 +58,8 @@ export function parse(page: number, sql: string): Schema {
         prev = t
     }
     // move pks to front for without rowid case (to match the table on disk)
-    if (!rowid) { 
-        columns = pks.concat(columns.filter(x => !pks.includes(x))) 
+    if (!rowid) {
+        columns = pks.concat(columns.filter(x => !pks.includes(x)))
     } else if (table) {
         // we have rowid as column 0 otherwise
         columns.unshift('rowid')
@@ -82,7 +82,7 @@ export class Database {
         this.pageSize = data.getUint8(16)*256+data.getUint8(17)*65536;
         this.encoding = data.getUint32(56);
         assert(this.encoding == 1, 'only utf8 is supported');
-        
+
         // This is extra space in each page for stuff like encryption
         this.reserved = data.getUint8(20); assert(this.reserved == 0, "reserved not implemented");
         this.tables = {
@@ -97,8 +97,8 @@ export class Database {
         for (let row of this.seek(1,[])) {
             let [rowid, type,name,_table,page,sql] = row as any;
             debug({type,name})
-            if (type == 'table') { 
-                let table = this.tables[name] = parse(page, sql) 
+            if (type == 'table') {
+                let table = this.tables[name] = parse(page, sql)
                 if (table.rowid) {
                     table.indexes.push({
                         name,
@@ -138,7 +138,7 @@ export class Database {
             }
         }
     }
-    
+
     getPage(number: number) {
         return new DataView(this.data.buffer, (number-1)*this.pageSize, this.pageSize);
     }
@@ -152,7 +152,7 @@ export class Database {
         let right = data.getUint32(start+8); // only valid for types 2,5
         return { type, data, start, nCells, cellStart, right }
     }
-    
+
     // return a cursor at key (or node that would follow key) where key is a prefix of the cell tuples
     // do we want a separate one for rowid?
     // this is for searching an index or materialized view (without rowid tables)
@@ -161,26 +161,25 @@ export class Database {
         // Find start
         let stack: [Node,number][]  = []
         let node = this.getNode(i)
-        let cell = (ix:number) => this.cell(node,ix)
+        let tuple = (ix:number) => this.getTuple(node,ix)
         let getChild = (ix: number) => {
             assert(node.type<8, 'got child of leaf?')
             let ptrPos = ix < node.nCells ? node.data.getUint32(node.data.getUint16(node.start + 12 + 2*ix)) : node.right
             return this.getNode(ptrPos)
         }
+        // Seach for first spot <= needle
         let ix: number
         for (;;) {
-            ix = search(node.nCells, (i) => tupleLE(needle, this.cell(node,i).tuple))
+            ix = search(node.nCells, (i) => tupleLE(needle, tuple(i)))
             if (node.type&8) break // leaf
             stack.push([node,ix])
             node = getChild(ix)
         }
-        
-        // the loop assumes we need to recurse down if we're at a left node, which
-        // works initially because we're at a leaf
+
         for (;;) {
             if (ix <= node.nCells) {
                 if (node.type&8) { // leaf
-                    if (ix < node.nCells) yield cell(ix).tuple
+                    if (ix < node.nCells) yield tuple(ix)
                     ix++
                 } else {
                     stack.push([node,ix])
@@ -188,34 +187,25 @@ export class Database {
                     ix = 0
                 }
             } else {
-                // leaf or past end = pop
-                // emit the key if appropriate and increment ix
+                // past end -> pop
+                // emit the tuple if appropriate and increment ix
                 let t = stack.pop()
                 if (!t) return
                 node = t[0]
                 ix = t[1]
                 if (ix < node.nCells && node.type != 5)
-                    yield cell(ix).tuple
+                    yield tuple(ix)
                 ix++
             }
         }
     }
 
-    // Get all the cells in a Node
-    cells(node: Node) {
-        let cells: any[] = [];
-        for (let i=0;i<node.nCells;i++) {
-            cells.push(this.cell(node, i));
-        }
-        return cells;   
-    }
-
-    cell(page: Node, i: number): Cell {
-        let ptr = page.start + ((page.type<8)?12:8); 
+    getTuple(page: Node, i: number): Tuple {
+        let ptr = page.start + ((page.type<8)?12:8);
         let data = page.data;
         let pos = data.getUint16(ptr+2*i);
         let type = page.type
-        
+
         function varint() { // supposed to be signed and js doesn't handle 64 bits...
             let rval = 0;
             for (let j=0;j<8;j++) {
@@ -226,11 +216,7 @@ export class Database {
             }
             return (rval << 8) | data.getUint8(pos++);
         }
-        function u32() {
-            pos += 4;
-            return data.getUint32(pos-4);
-        }
-        let left = (type == 5 || type == 2) ? u32() : 0
+        if (type == 5 || type == 2) pos += 4
         let tlen = type == 5 ? 0 : varint();
         let rowid =  (type == 13 || type == 5) ? varint() : undefined;
         let payload
@@ -264,22 +250,14 @@ export class Database {
                     }
                 }
             }
-            assert(payload.byteLength == tlen, "Length mismatch");   
-            tuple = decode_(payload) 
+            assert(payload.byteLength == tlen, "Length mismatch");
+            tuple = decode_(payload)
             if (rowid != undefined) tuple.unshift(rowid)
         } else if (rowid) {
             tuple = [rowid]
         }
-        return {left,rowid,tuple};
+        return tuple;
     }
-
-    left(page: Node, i: number): number {
-        let ptr = page.start + ((page.type<8)?12:8); 
-        let data = page.data;
-        let pos = data.getUint16(ptr+2*i); 
-        return data.getUint32(pos);
-    }
-
 }
 export function tupleEq(needle: Value[], tuple: Value[]) {
     return -1 == needle.findIndex((v,i) => tuple[i] != v)
@@ -315,7 +293,7 @@ export function decode_(data: DataView): Value[] {
                 return null;
             // FIXME - 64 bits don't fit into javascript integers.
             case 1: case 2: case 3:
-            case 4: case 5: case 6: 
+            case 4: case 5: case 6:
                 var mask = 0x80;
                 var value = data.getUint8(pos++);
                 for (;t>1;t--) {
@@ -338,7 +316,7 @@ export function decode_(data: DataView): Value[] {
                     pos += len;
                     return t&1 ? td.decode(v) : v;
                 }
-                assert(false, "Bad type: "+t);
+                assert(false, `unhandled col type {t}`);
         }
     });
     return row;

@@ -49,7 +49,7 @@ export type TableSpec = {
 }
 
 export type Cell = {
-    left: number
+    // left: number
     rowid?: number
     tuple: Tuple
 }
