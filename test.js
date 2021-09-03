@@ -15,4 +15,4 @@ console.log('\n\n-----\n\n')
 for (let row of db.seek(9,[577,90])) {
     console.log(row)
 }
-console.log('lookup',db.lookup(9,[577,99]))
+console.log('lookup',db.seek(9,[577,99]).next())

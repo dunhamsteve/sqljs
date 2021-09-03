@@ -152,17 +152,6 @@ export class Database {
         let right = data.getUint32(start+8); // only valid for types 2,5
         return { type, data, start, nCells, cellStart, right }
     }
-
-    // look up specific pk (return tuple or undefined)
-    lookup(i: number, needle: Value[]) {
-        let result = this.seek(i, needle).next()
-        if (!result.done) {
-            let tuple = result.value
-            if (tupleEq(needle, tuple)) {
-                return tuple
-            }
-        }
-    }
     
     // return a cursor at key (or node that would follow key) where key is a prefix of the cell tuples
     // do we want a separate one for rowid?
