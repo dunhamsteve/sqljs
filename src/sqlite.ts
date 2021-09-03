@@ -3,8 +3,8 @@
 // This is coded for nodejs Buffer and needs to be adjusted for ArrayBuffer/DataView
 
 import { tokenize } from './parser.js'
-import { Cell, Row, Schema, Tuple, Value, Node } from './types.js'
-import {jlog,assert, search} from './util.js'
+import { Schema, Tuple, Value, Node } from './types.js'
+import { assert, search, tupleCmp } from './util.js'
 
 let td = new TextDecoder()
 
@@ -95,7 +95,7 @@ export class Database {
             }
         }
         for (let row of this.seek(1,[])) {
-            let [rowid, type,name,_table,page,sql] = row as any;
+            let [_rowid,type,name,_table,page,sql] = row as any;
             debug({type,name})
             if (type == 'table') {
                 let table = this.tables[name] = parse(page, sql)
@@ -170,7 +170,7 @@ export class Database {
         // Seach for first spot <= needle
         let ix: number
         for (;;) {
-            ix = search(node.nCells, (i) => tupleLE(needle, tuple(i)))
+            ix = search(node.nCells, (i) => tupleCmp(needle, tuple(i))<1)
             if (node.type&8) break // leaf
             stack.push([node,ix])
             node = getChild(ix)
@@ -258,16 +258,6 @@ export class Database {
         }
         return tuple;
     }
-}
-export function tupleEq(needle: Value[], tuple: Value[]) {
-    return -1 == needle.findIndex((v,i) => tuple[i] != v)
-}
-export function tupleLE(needle: Value[], tuple:Value[]) {
-    for (let i=0;i<needle.length;i++) {
-        if (needle[i]! < tuple[i]!) return true
-        if (needle[i]! > tuple[i]!) return false
-    }
-    return true
 }
 
 export function decode_(data: DataView): Value[] {

@@ -1,7 +1,10 @@
 import { parser } from "./parser.js";
-import { Database, tupleEq } from "./sqlite.js";
+import { Database } from "./sqlite.js";
 import { Expr, Schema, O, QName, Value, Tuple, Index, Infix } from "./types.js";
-import { assert, jlog } from "./util.js";
+import { assert, jlog, tupleCmp } from "./util.js";
+
+let debug = console.log
+debug = () => undefined
 
 type TableInfo = {
     state: number
@@ -33,12 +36,7 @@ type Constraint = {
     // additional bookkeeping, indexes, tables, etc
 }
 
-// TODO - for the plan dump a sequence of this with the expr's rewritten to point at tuple indexes instead of names
-// I'd do it in visit, but I wanted to reserve the right to run multiple scenarios...
-type Step = { type: 'filter', expr: Expr }
-          | { type: 'rowid', expr: Expr, index: Index, project: number[] }
-          | { type: 'scan', table: Schema, project: number[] }
-          | { type: 'index', index: Index, project: number[] }
+let indexOps = ['<','<=','=','>','>=']
 
 // v1, this just does everything
 // v2, we'll return a plan and execute it (with args) below
@@ -64,7 +62,7 @@ export function *execute(db: Database, sql: string) {
         tables.push(info)
 
         for (let col of schema.columns) {
-            console.log(name,as,col)
+            debug(name,as,col)
             col2table[col] ||= []
             col2table[col].push(as)
         }
@@ -120,7 +118,7 @@ export function *execute(db: Database, sql: string) {
     let plan: TableInfo[] = []
     function visit(info: TableInfo) {
         // Here a dependent is pointing back at us, the constraint can't be resolved until we get to our table
-        if (info.state == 1) console.log('LOOP', info.as)
+        if (info.state == 1) debug('LOOP', info.as)
         if (info.state > 0) return
         let {indexes} = info.schema
         info.state = 1 // scanning
@@ -140,16 +138,16 @@ export function *execute(db: Database, sql: string) {
                     let index = indexes.find(ix => ix.columns[0] == field)
                     // These are the operations we know at the moment
                     // We'll handle backwards and like at some point
-                    if (index && ['=','>','>='].includes(op)) {
+                    if (index && indexOps.includes(op)) {
                         // we grab the first matching index and run with it
-                        console.log('MATCH', info.as, field, 'for', expr)
-                        console.log('INDEX is', index)
+                        debug('MATCH', info.as, field, 'for', expr)
+                        debug('INDEX is', index)
                         constraint.done = true // pre-mark this
                         eachName(right, qname => qname[1] && visit(name2table[qname[1]]))
                         info.constraint = expr
                         info.index = index
                         break
-                    } else if (index) { console.log(`Can't index for ${op} on ${info.as}.${field}`) }
+                    } else if (index) { debug(`Can't index for ${op} on ${info.as}.${field}`) }
                 }
             }
         }
@@ -161,25 +159,32 @@ export function *execute(db: Database, sql: string) {
     tables.forEach(visit)
     plan.reverse()
 
-    console.log('order', plan.map(info => info.as))
-    console.log('constraints', constraints)
+    debug('order', plan.map(info => info.as))
+    debug('constraints', constraints)
     let fields: string[] = []
     function isFree(expr: Expr) {
         let free = true
         eachName(expr, ([_,t,n]) => free = free && fields.includes(t+'.'+n))
-        console.log('isFree', expr, free)
+        debug('isFree', expr, free)
         return free
     }
-
+    
     function eval_(tuple: Tuple, expr: Expr): any {
         switch (expr[0]) {
             case 'LIT': return expr[1][1]
             case 'QN':  return tuple[fields.indexOf(expr[1]+'.'+expr[2])]
             case 'IFX':
+                let a = eval_(tuple, expr[2]), b =  eval_(tuple, expr[3])
                 switch (expr[1]) {
-                    case '=': return eval_(tuple, expr[2]) == eval_(tuple, expr[3])
-                    case '<': return eval_(tuple, expr[2]) < eval_(tuple, expr[3])
-                    case '>': return eval_(tuple, expr[2]) > eval_(tuple, expr[3])
+                    case '+':  return a + b
+                    case '-':  return a - b
+                    case '*':  return a + b
+                    case '/':  return a / b // FIXME Inf?
+                    case '=':  return a == b
+                    case '<':  return a < b
+                    case '>':  return a > b
+                    case '<=': return a <= b
+                    case '>=': return a >= b
                     default: assert(false, `unhandled binop ${expr[1]}`)
                 }
         }
@@ -187,7 +192,7 @@ export function *execute(db: Database, sql: string) {
 
     // project contains 0 for rowid or 1-based index for 
     function *scan(input: Generator<Tuple>, table: TableInfo, project: number[]) {
-        console.log('SCAN',table.as, project, (project.map(i => table.schema.columns[i])))
+        debug('SCAN',table.as, project, (project.map(i => table.schema.columns[i])))
         for (let inTuple of input) {
             for (let newTuple of db.seek(table.schema.page,[])) {
                 yield inTuple.concat(project.map(i => newTuple[i]))
@@ -196,33 +201,27 @@ export function *execute(db: Database, sql: string) {
     }
 
     function *filter(output: Generator<Tuple>, constraint: Expr) {
-        console.log('FILTER',constraint)
+        debug('FILTER',constraint)
         for (let tuple of output) {
             if (eval_(tuple, constraint)) yield tuple
         }
     }
-    function *rowidEq(input: Generator<Tuple>, index: Index, op: string, constraint: Expr, project: number[]) {    
-        console.log('ROWIDEQ', index, constraint, project)
-        if (op != '=' && op != '>' && op != '>=') assert(false, `unhandled rowid op ${op}`)
-        for (let inTuple of input) {
-            let value = eval_(inTuple, constraint)
-            for (let tuple of db.seek(index.page, [value])) {
-                const eq = tupleEq([value], tuple);
-                if (op == '=' && !eq) break
-                if (op == '>' && eq) continue
-                yield inTuple.concat(project.map(i=> tuple![i]))
-            }
-        }
-    }
+
+    // TODO - switch to representation of a range (a,b]
     function *indexEq(input: Generator<Tuple>, index: Index, op: string, constraint: Expr, project: number[]) {
-        console.log('INDEXEQ', index, constraint, project)
-        if (op != '=' && op != '>' && op != '>=') assert(false, `unhandled op ${op}`)
+        debug('INDEXEQ', index, constraint, project)
+        let ix = indexOps.indexOf(op)
+        if (ix < 0) assert(false, `unhandled op ${op}`)
         for (let inTuple of input) {
             let value = eval_(inTuple, constraint)
-            for (let tuple of db.seek(index.page, [value])) {
-                const eq = tupleEq([value], tuple);
-                if (op == '=' && !eq) break
-                if (op == '>' && eq) continue
+            let lower = ix > 1 ? [value] : []
+            if (op == '<') debugger
+            for (let tuple of db.seek(index.page, lower)) {
+                const cmp = tupleCmp(tuple,[value]);
+                if (op == '='  && cmp) break
+                if (op == '>'  && !cmp) continue
+                if (op == '<'  && cmp >= 0) break
+                if (op == '<=' && cmp > 0) break
                 yield inTuple.concat(project.map(i=> tuple![i]))
             }
         }
@@ -231,7 +230,7 @@ export function *execute(db: Database, sql: string) {
     function dofilters() {
         for (let constraint of constraints) {
             if (!constraint.done && isFree(constraint.expr)) {
-                console.log('discharge', constraint)
+                debug('discharge', constraint)
                 output = filter(output, constraint.expr)
                 constraint.done = true
             }
@@ -253,7 +252,7 @@ export function *execute(db: Database, sql: string) {
         const table = plan.pop()
         if (!table) break
         // find appropriate index or scan table
-        console.log(table.as, 'CONSTRAINT', table.constraint)
+        debug(table.as, 'CONSTRAINT', table.constraint)
         if (table.constraint && table.index) {
             let op = table.constraint[1]
             let ty = table.index.type
@@ -261,24 +260,24 @@ export function *execute(db: Database, sql: string) {
                     let project: number[] = []
                     table.index.columns.forEach((v,i) => {
                         if (table.need.has(v)) {
-                            console.log('project',v)
+                            debug('project',v)
                             fields.push(table.as+'.'+v)
                             project.push(i)
                         }
                     })
-                    output = rowidEq(output, table.index, op, table.constraint[3], project)
+                    output = indexEq(output, table.index, op, table.constraint[3], project)
             } else {
-                console.log('INDEX', table.index.name)
+                debug('INDEX', table.index.name)
                 let project: number[] = []
                 table.index.columns.forEach((v,i) => {
                     if (table.need.has(v)|| v == 'rowid') {
-                        console.log('project',v)
+                        debug('project',v)
                         fields.push(table.as+'.'+v)
                         project.push(i)
                     }
                 })
                 output = indexEq(output, table.index, op, table.constraint[3], project)
-                console.log('rowid to table?', table.as)
+                debug('rowid to table?', table.as)
                 // for any columns picked up by the index
                 dofilters()
 
@@ -286,17 +285,16 @@ export function *execute(db: Database, sql: string) {
                 table.schema.columns.forEach((v,i) => {
                     let key = table.as+'.'+v
                     if (table.need.has(v) && ! fields.includes(key)) {
-                        console.log('project', v, key)
+                        debug('project', v, key)
                         fields.push(key)
                         project2.push(i)
                     }
                 })
                 
                 if (project2.length) {
-                    console.log('YES')
-                    output = rowidEq(output,table.schema.indexes[0], '=', ['QN',table.as, 'rowid'], project2)
+                    debug('YES')
+                    output = indexEq(output,table.schema.indexes[0], '=', ['QN',table.as, 'rowid'], project2)
                 }
-            
             }
         } else {
             // move scan up here
@@ -308,11 +306,11 @@ export function *execute(db: Database, sql: string) {
                     project.push(i)
                 }
             })
-            console.log('SCAN',table,'projecting',project)
+            debug('SCAN',table,'projecting',project)
             output = scan(output, table, project)
         }
     }
-    console.log(fields)
+    debug(fields)
     for (let tuple of output) {
         yield query.select.map(e => eval_(tuple, e))
     }

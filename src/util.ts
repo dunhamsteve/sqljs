@@ -1,7 +1,15 @@
+import { Tuple } from "./types";
 
 export function assert(value:unknown, msg: string = 'assert'): asserts value {  if (!value) throw new Error("Assert failed: "+msg); }
 export let jlog = (x:any) => console.log(JSON.stringify(x,null,'  '))
 
+export function tupleCmp(needle: Tuple, tuple:Tuple) {
+    for (let i=0;i<needle.length;i++) {
+        if (needle[i]! < tuple[i]!) return -1
+        if (needle[i]! > tuple[i]!) return 1
+    }
+    return 0
+}
 
 export function search(n: number, fn: (ix:number) => boolean) {
     let i = 0, j = n

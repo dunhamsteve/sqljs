@@ -29,6 +29,7 @@ let cases: Case[] = [
                      where albums.artistid = artists.artistid and tracks.albumid = albums.albumid and tracks.genreid = genres.genreid`],
     ['great',  175, 'select rowid, name from artists where rowid > 100'],
     ['less',    99, 'select rowid, name from artists where rowid < 100'],
+    ['leq',    100, 'select rowid, name from artists where rowid <= 100'],
 ]
 
 

@@ -10,25 +10,26 @@ let reserved = ["on", "select", "left","where"]
 // operator precedence table
 // maybe fix & | unless sql demands it as is
 // https://www.sqlite.org/lang_expr.html#operators_and_parse_affecting_attributes
-type Ops = string[] & {tag?: any}
-let tag = (tag:any, ops:Ops) => (ops.tag=tag,ops)
+type Tag = 'P' | 'I'
+type Level = string[] & {tag?: Tag}
+let level = (tag:Tag, ...ops:Level) => (ops.tag=tag,ops)
 
 let operators = [
-    tag('I', ["or"]),
-    tag('I', ["and"]),
-    tag('P', ['not']),
-    tag('I', ["=", "==", "<>"]),
-    tag('I', ["<",">","<=","<="]),
-    tag('I', ["&", "|", "<<", ">>"]),
-    tag('I', ["+","-"]),
-    tag('I', ["*","/","%"]),
-    tag('P', ["+","-"]),
+    level('I', "or"),
+    level('I', "and"),
+    level('P', 'not'),
+    level('I', "=", "==", "<>"),
+    level('I', "<",">","<=",">="),
+    level('I', "&", "|", "<<", ">>"),
+    level('I', "+","-"),
+    level('I', "*","/","%"),
+    level('P', "+","-"), // prefix + is a coersion hack in sqlite
 ]
 
 export function tokenize(sql: string) {
     // refine this
     let toks = []
-    for (let tok of sql.match(/\w+|".*?"|[\d.]+|'.*?'|\[.*?\]|\S/g) || []) {
+    for (let tok of sql.match(/\w+|".*?"|[\d.]+|[<=>]+|'.*?'|\[.*?\]|\S/g) || []) {
         let c = tok[0]
         if (c=='"' || c == '[') tok = tok.slice(1,tok.length-1)
         if (c != '"') tok = tok.toLowerCase()
