@@ -162,30 +162,32 @@ export class Database {
         let stack: [Node,number][]  = []
         let node = this.getNode(i)
         let cell = (ix:number) => this.cell(node,ix)
+        let getChild = (ix: number) => {
+            assert(node.type<8, 'got child of leaf?')
+            let ptrPos = ix < node.nCells ? node.data.getUint32(node.data.getUint16(node.start + 12 + 2*ix)) : node.right
+            return this.getNode(ptrPos)
+        }
         let ix: number
         for (;;) {
             ix = search(node.nCells, (i) => tupleLE(needle, this.cell(node,i).tuple))
             if (node.type&8) break // leaf
             stack.push([node,ix])
-            if (ix < node.nCells)
-                node = this.getNode(cell(ix).left)
-            else
-                node = this.getNode(node.right)
+            node = getChild(ix)
         }
         
         // the loop assumes we need to recurse down if we're at a left node, which
         // works initially because we're at a leaf
         for (;;) {
-            if (ix < node.nCells) {
+            if (ix <= node.nCells) {
                 if (node.type&8) { // leaf
-                    yield cell(ix).tuple
+                    if (ix < node.nCells) yield cell(ix).tuple
                     ix++
                 } else {
                     stack.push([node,ix])
-                    node = this.getNode(cell(ix).left)
+                    node = getChild(ix)
                     ix = 0
                 }
-            } else if (node.type&8 || ix > node.nCells) {
+            } else {
                 // leaf or past end = pop
                 // emit the key if appropriate and increment ix
                 let t = stack.pop()
@@ -195,10 +197,6 @@ export class Database {
                 if (ix < node.nCells && node.type != 5)
                     yield cell(ix).tuple
                 ix++
-            } else {
-                stack.push([node,ix])
-                node = this.getNode(node.right)
-                ix = 0
             }
         }
     }
@@ -238,8 +236,8 @@ export class Database {
         let payload
         let tuple: Tuple = []
         if (type !== 5) {
-            let u = data.byteLength; // REVIEW - this right if we're on the first page?
-            let x = page.type === 13 ? u-35 : (((u-12)*64/255)|0)-23;
+            let u = data.byteLength;
+            let x = type === 13 ? u-35 : (((u-12)*64/255)|0)-23;
             if (tlen <= x) {
                 payload = sliceView(data,pos,pos+tlen);
             } else {
@@ -274,6 +272,14 @@ export class Database {
         }
         return {left,rowid,tuple};
     }
+
+    left(page: Node, i: number): number {
+        let ptr = page.start + ((page.type<8)?12:8); 
+        let data = page.data;
+        let pos = data.getUint16(ptr+2*i); 
+        return data.getUint32(pos);
+    }
+
 }
 export function tupleEq(needle: Value[], tuple: Value[]) {
     return -1 == needle.findIndex((v,i) => tuple[i] != v)

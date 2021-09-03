@@ -1,6 +1,3 @@
-// TODO:
-// - [ ] select * from sqlite_master
-
 import { Expr, O, Select, TableSpec } from "./types"
 
 let debug = console.log
