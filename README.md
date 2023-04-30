@@ -26,7 +26,6 @@ In 2023 I was playing with implementing the client (python) and server (typescri
   - [ ] Support some OR operations
   - [ ] Support left join
   - [ ] Translate constraints to use the tuple index (instead of looking up name on each access)
-  - [ ] Fix non-index based comparisons
   - [ ] Order by - maybe drop the generator bit
 - [ ] Much later
   - [ ] Merge join? (we could return a value to the generator for the next key to seek)

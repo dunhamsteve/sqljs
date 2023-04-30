@@ -31,8 +31,8 @@ export function tokenize(sql: string) {
     let toks = []
     for (let tok of sql.match(/\w+|".*?"|[\d.]+|[<=>]+|'.*?'|\[.*?\]|\S/g) || []) {
         let c = tok[0]
+        if (c != '"' && c != "'") tok = tok.toLowerCase()
         if (c=='"' || c == '[') tok = tok.slice(1,tok.length-1)
-        if (c != '"') tok = tok.toLowerCase()
         toks.push(tok)
     }
     return toks
