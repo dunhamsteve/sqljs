@@ -3,6 +3,10 @@ import { Database } from "./sqlite.js";
 import { Expr, Schema, O, QName, Value, Tuple, Index, Infix } from "./types.js";
 import { assert, jlog, tupleCmp } from "./util.js";
 
+// TODO
+// - I believe OR is not implemented.
+// - Comparisons are only working on index scans (I guess I did the difficult bit first)
+
 let debug = console.log
 debug = () => undefined
 

@@ -6,13 +6,15 @@ Recently (2021) I decided to add support for reading indexes and running SQL que
 
 SQLite requires you to parse the DDL to know the names of the columns. I started out with a regex hack in my initial version. This hack got replaced by a state machine that is a bit inscrutible and hard to modify. It will eventually be replaced by a parser, like one for SQL queries.
 
+In 2023 I was playing with implementing the client (python) and server (typescript) side of the postgresql protocol to learn how it works. I ended up gluing it onto this project.
+
 ## Files
 
 - src/sqlite.ts - code to read the sqlite file and do index scans.
 - src/parser.ts - code to parse SELECT statements
 - src/eval.ts   - query planning and execution
 - src/types.ts  - shared types
-
+- src/server.ts - postgresql protocol server
 
 ## Tasks
 
@@ -24,8 +26,15 @@ SQLite requires you to parse the DDL to know the names of the columns. I started
   - [ ] Support some OR operations
   - [ ] Support left join
   - [ ] Translate constraints to use the tuple index (instead of looking up name on each access)
+  - [ ] Fix non-index based comparisons
+  - [ ] Order by - maybe drop the generator bit
 - [ ] Much later
   - [ ] Merge join? (we could return a value to the generator for the next key to seek)
+- [ ] Server
+  - [x] Basic implementation of psql server
+  - [ ] Get column names in there (maybe tease out the query parsing so they can be extracted)
+  - [ ] Add the "sync" variables that are sent on startup
+  - [ ] Support more types
 
 
 ## Query Planning
