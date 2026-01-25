@@ -4,3 +4,7 @@ attic
 .vscode
 out
 tmp
+build
+public
+private.key
+public.crt

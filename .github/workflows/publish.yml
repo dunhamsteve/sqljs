@@ -1,0 +1,49 @@
+name: Publish Playground
+concurrency:
+    group: production
+    cancel-in-progress: true
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+
+      - name: dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: 25
+      - name: build
+        run: |
+          npm install -g esbuild vite
+          npm install
+          mkdir -p public
+          cp cases/chinook.db public
+          vite build --base /sqljs
+      - name: Upload playground
+        id: deployment
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/
+  deploy:
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+
+
+
+

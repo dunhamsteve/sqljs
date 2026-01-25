@@ -1,0 +1,208 @@
+:root {
+  --border-color: #888;
+  --tab-select-color: #555;
+  --text-color: black;
+  --tab-text-color: #555;
+  --bg-color: white;
+}
+body {
+  overflow: hidden;
+  font-size: 12px;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+}
+svg.icon path {
+  stroke: black;
+  fill: none;
+}
+.icon {
+  color: var(--text-color);
+  height: 24px;
+  width: 24px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tab-select-color: #eee;
+    --tab-text-color: #aaa;
+    --text-color: white;
+    --bg-color: black;
+    color-scheme: dark;
+  }
+  .tabBody {
+    /* match editor */
+    color: #abb2bf;
+    background-color: #282c34;
+  }
+}
+#result {
+  padding: 5px;
+  overflow: auto;
+  height: 100%;
+}
+#help {
+  padding: 5px;
+  font-family: 'Comic Code', monospace;
+  overflow: auto;
+  height: 100%;
+}
+
+#help>div {
+  margin: 5px 0;
+}
+/* 
+.toast, .toast div {
+    background: black;
+    color: white;
+  }
+*/
+.toast {
+  position: absolute;
+  left: 50%;
+  top: 50px;
+  width: auto;
+  z-index: 100;
+  background: var(--bg-color);
+  color: var(--text-color);
+}
+.toast div {
+  margin-left: -50%;
+  border: solid 2px darkgrey;
+  padding: 10px;
+  border-radius: 10px;
+  text-align: center;
+  background: var(--bg-color);
+  color: var(--text-color);
+}
+
+#javascript {
+  height: 100%;
+}
+.right .tabBody {
+  border-left: solid 1px var(--border-color);
+}
+#app {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  position: absolute;
+}
+#editor {
+  height: 100%;
+}
+
+.wrapper {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+}
+@media (width >= 1024px) {
+  .wrapper > div {
+    flex: 1 1;
+    /* allow smaller than natural */
+    width: 100px;
+  }
+}
+
+@media (width <=1024px) {
+  .wrapper {
+    flex-direction: column;
+  }
+  .wrapper .tabPanel.left {
+    /* designed to go down to the keyboard on my phone */
+    flex: .65 .65;
+    height: 100px;
+  }
+
+  .wrapper .tabPanel.right {
+    flex: .35 .35;
+    height: 100px;
+  }
+}
+.tabBar button {
+  border: none;
+  padding: none;
+  background: inherit;
+}
+.tabPanel {
+  display: flex;
+  flex-direction: column;
+  font-family: 'Comic Code', monospace;
+}
+.tabBar {
+  display:flex;
+  flex-direction: row;
+  gap: 10px;
+  margin: 10px 0 0 0;
+  border-bottom: solid 1px var(--border-color);
+  height: 30px;
+}
+.tabBar>select {
+  margin: 0 5px 5px;
+}
+.tab {
+  padding: 4px;
+  border-bottom: solid 2px transparent;
+  color: var(--tab-text-color);
+}
+.tab.selected {
+  border-bottom: solid 2px var(--tab-select-color);
+  color: var(--text-color);
+}
+.tabBody {
+  flex: 1 1;
+  height: 0; /* min height */
+}
+th, td {
+  padding: 5px;
+  text-align: left;
+}
+table {
+  border-collapse: collapse;
+}
+tr:has(th) {
+  border-bottom: solid 2px var(--border-color);
+}
+#result, #javascript, #output, #cases, #repl, .cm-tooltip {
+  font-family: 'Comic Code', monospace;
+  font-size: 12px;
+  white-space: pre;
+  padding: 5px;
+}
+#cases {
+  white-space: pre-wrap;
+}
+#repl {
+  height: 100%;
+}
+#editor .cm-editor {
+  height: 100%;
+}
+.replTop {
+  height: 50px;
+  overflow: auto;
+  white-space: pre;
+}
+.replBottom {
+  padding: 5px;
+}
+.vbox {
+  display: flex;
+  flex-direction: column;
+}
+.hbox {
+  display: flex;
+  flex-direction: row;
+}
+.stretch {
+  flex: 1 1;
+}
+.tooltip {
+  padding: 5px;
+}
+.cm-editor .cm-content {
+  font-family: 'Comic Code', monospace;
+}
+.cm-editor {
+  height: 100%;
+}
