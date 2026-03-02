@@ -29,6 +29,7 @@ In 2023 I was playing with implementing the client (python) and server (typescri
   - [ ] Order by - maybe drop the generator bit
 - [ ] Much later
   - [ ] Merge join? (we could return a value to the generator for the next key to seek)
+- [x] Web playground
 - [ ] Server
   - [x] Basic implementation of psql server
   - [ ] Get column names in there (maybe tease out the query parsing so they can be extracted)
